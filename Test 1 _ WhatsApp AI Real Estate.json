@@ -1,0 +1,230 @@
+{
+  "name": "Test 1 : WhatsApp AI Real Estate",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "id": "271157b5-e9ff-443f-bd7a-6f28e38fed1e",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        1312,
+        800
+      ],
+      "webhookId": "e9644fb2-9e7a-4782-88e5-a00b5c2f6264"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.leads) staticData.leads = {};\nif (!staticData.conversations) staticData.conversations = {};\n\nconst root = $json;\nconst value = root?.entry?.[0]?.changes?.[0]?.value ?? root?.body?.entry?.[0]?.changes?.[0]?.value ?? root;\nconst msg = value?.messages?.[0];\nif (!msg) return [{json:{ignore:true, reason:'No WhatsApp message found'}}];\n\nconst phone = msg.from;\nconst phoneNumberId = value?.metadata?.phone_number_id ?? 'YOUR_PHONE_NUMBER_ID';\nconst contactName = value?.contacts?.[0]?.profile?.name ?? 'there';\nconst text = msg?.text?.body ?? '';\nconst buttonId = msg?.interactive?.button_reply?.id ?? '';\nconst listId = msg?.interactive?.list_reply?.id ?? '';\nconst replyId = buttonId || listId || '';\nconst pendingBooking = staticData.pendingViewing?.[phone];\nconst numericSelection = !replyId && /^\\s*[1-5]\\s*$/.test(text);\nconst propertyActionMatch = replyId.match(/^(photos|details|viewing)_(.+)$/i);\nlet property_action = propertyActionMatch ? propertyActionMatch[1].toLowerCase() : '';\nlet property_id = propertyActionMatch ? propertyActionMatch[2] : '';\nlet booking_selection = '';\nif (numericSelection && pendingBooking) {\n  property_action = 'booking_select';\n  property_id = pendingBooking.property_id || '';\n  booking_selection = String(Number(text.trim()));\n}\n\nconst buttonMap = {\n  rent_property:'I want to rent a property',\n  buy_property:'I want to buy a property',\n  sell_property:'I want to sell or rent out my property',\n  see_all_options:'Show me all options',\n  rent_apartment:'I want to rent an apartment',\n  rent_villa:'I want to rent a villa',\n  buy_apartment:'I want to buy an apartment',\n  buy_villa:'I want to buy a villa',\n  property_apartment:'Apartment',\n  property_villa:'Villa',\n  property_townhouse:'Townhouse',\n  property_penthouse:'Penthouse',\n  bed_studio:'Studio',\n  bed_1:'1 Bedroom',\n  bed_2:'2 Bedrooms',\n  bed_3:'3 Bedrooms',\n  timeline_now:'Immediately',\n  timeline_1m:'Within 1 month',\n  timeline_3m:'Within 3 months',\n  timeline_exploring:'Just exploring',\n  human_request:'I want to speak with a person'\n};\n\nconst userText = text.trim() || buttonMap[replyId] || replyId;\n\nlet lead = staticData.leads[phone] || {\n  phone, name: contactName, language:'', intent:'', purpose:'',\n  propertyType:'', bedrooms:'', bathrooms:'', budget:'', currency:'AED',\n  area:'', readyOrOffplan:'', paymentMethod:'', timeline:'',\n  leadScore:0, temperature:'cold', humanRequested:false, aiPaused:false,\n  status:'active', lastUpdated:''\n};\n\nlead.name = contactName || lead.name;\nlead.lastUpdated = new Date().toISOString();\n\nlet history = staticData.conversations[phone] || [];\nhistory.push({role:'user', text:userText, at:new Date().toISOString()});\nhistory = history.slice(-12);\nstaticData.conversations[phone] = history;\n\nreturn [{json:{\n  ignore:false, phone, phone_number_id:phoneNumberId, contact_name:contactName,\n  user_text:userText, reply_id:replyId, property_action, property_id, booking_selection, lead, conversation_history:history\n}}];\n"
+      },
+      "id": "dd12f832-7a67-40be-8e36-9f210c0bb549",
+      "name": "Prepare Conversation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ `You are the multilingual WhatsApp real-estate sales assistant for a UAE property agency. Respond naturally like a helpful human, not like a form. Detect the customer's language from their latest message and reply in that language. If they switch languages, switch naturally too. Never invent property availability, prices, agents, viewing times, or inventory; property search will be added in the next phase. Your job in this phase is qualification and conversation.\n\nKnown lead profile:\n${JSON.stringify($json.lead)}\n\nRecent conversation:\n${JSON.stringify($json.conversation_history)}\n\nLatest customer message:\n${$json.user_text}\n\nExtract any facts the customer has provided: intent (buy/rent/sell_or_rent_out), purpose (living/investment/both), property type, bedrooms, bathrooms, budget, currency, area/community, ready/off-plan, payment method (cash/mortgage/unknown), timeline. Preserve known values and only change a field when the customer clearly provides a new value.\n\nAsk only for the single most useful missing qualification detail. Do not ask for information the customer already gave. If the customer gives several details in one message, acknowledge them and ask for the next missing detail naturally. If they ask for a human, request human takeover. If they appear ready to transact or request a viewing, flag hot lead/human handoff.\n\nReturn ONLY valid JSON with exactly these keys:\nreply, language, lead_updates, missing_next, human_requested, ai_paused, score_delta, temperature\n\nlead_updates must be an object containing only fields you learned or changed in this turn. score_delta is an integer from 0 to 30. temperature must be one of cold,warm,hot based on the updated profile. Keep reply concise for WhatsApp.` }}",
+        "batching": {}
+      },
+      "id": "047f02f7-6a3f-4d45-8f69-70e1bc0cb600",
+      "name": "Gemini Qualification Agent",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1760,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {
+          "maxOutputTokens": 900,
+          "temperature": 0.2
+        }
+      },
+      "id": "73a103bc-0912-4387-97fa-186ab408911d",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1832,
+        1032
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst staticData = $getWorkflowStaticData('global');\nconst input = $('Prepare Conversation').first().json;\nlet raw = $json.text ?? $json.output ?? $json.response ?? $json.data ?? '';\nif (typeof raw !== 'string') raw = JSON.stringify(raw);\nraw = raw.trim().replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```$/,'').trim();\n\nlet ai;\ntry {\n  ai = JSON.parse(raw);\n} catch (e) {\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  if (start >= 0 && end > start) ai = JSON.parse(raw.slice(start,end+1));\n  else throw new Error('Gemini did not return valid JSON: ' + raw);\n}\n\nconst lead = {...input.lead};\nconst updates = ai.lead_updates || {};\nfor (const [k,v] of Object.entries(updates)) {\n  if (v !== undefined && v !== null && String(v).trim() !== '') lead[k] = v;\n}\nconst previousScore = Number(lead.leadScore || 0);\nconst delta = Math.max(0, Math.min(30, Number(ai.score_delta || 0)));\nlead.leadScore = Math.min(100, previousScore + delta);\nif (ai.temperature === 'hot' || lead.leadScore >= 80) lead.temperature = 'hot';\nelse if (ai.temperature === 'warm' || lead.leadScore >= 45) lead.temperature = 'warm';\nelse lead.temperature = 'cold';\n\nlead.humanRequested = Boolean(ai.human_requested || lead.humanRequested);\nlead.aiPaused = Boolean(ai.ai_paused || lead.aiPaused);\nlead.lastUpdated = new Date().toISOString();\nif (lead.humanRequested) lead.status = 'human_requested';\n\nstaticData.leads[input.phone] = lead;\n\nlet history = staticData.conversations[input.phone] || [];\nhistory.push({role:'assistant', text:String(ai.reply || ''), at:new Date().toISOString()});\nhistory = history.slice(-12);\nstaticData.conversations[input.phone] = history;\n\nreturn [{json:{\n  phone:input.phone, phone_number_id:input.phone_number_id, lead,\n  reply:String(ai.reply || 'Thanks. Let me help you with that.'),\n  language:ai.language || lead.language || 'en',\n  human_requested:Boolean(ai.human_requested || lead.humanRequested),\n  ai_paused:Boolean(ai.ai_paused || lead.aiPaused),\n  lead_score:lead.leadScore, temperature:lead.temperature, raw_ai:ai\n}}];\n"
+      },
+      "id": "209c4f79-453a-45b2-8069-2282a4cc9051",
+      "name": "Save AI Lead Profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v23.0/{{$json.phone_number_id}}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAZApEXLx9ZCcBSvYlZATN2RoaQqUD8vf4LSzElSYEKOzatkXOcQzsDzyEKZCPAZCDnFEoWmAzqI57UtOv3sj2qZBJWU4gZCr84wIq3nHcLZAH1IOhffm8FRsFqqkdWZAzEVZB4UvSiPkKZCyqVG8PnPhrtJl6bglzONZB6VBZBHx7J6F1EqOUBiZAldO5fLlZBcxpIbAuLF3XNOSayNA6RwIT4nKn4JhHzsDdrEXDxPiLgkU473Mcdq19CSlVbhZAe9sR50Pkw0ah7zbgPm1HyvTLtQazdLSr4ZD"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{\n{\n messaging_product: \"whatsapp\", recipient_type: \"individual\", to: $json.phone, type: \"text\", text: { body: $json.reply }\n}\n}}",
+        "options": {}
+      },
+      "id": "17f4334d-6df9-4a25-bc48-c7e91a0b0a4f",
+      "name": "Send AI Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2336,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.human_requested}}",
+              "operation": "isTrue"
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "c45fc2fd-9f05-4118-8093-68f6b98bb399",
+      "name": "Human Requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Conversation": {
+      "main": [
+        [
+          {
+            "node": "Gemini Qualification Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Gemini Qualification Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Qualification Agent": {
+      "main": [
+        [
+          {
+            "node": "Save AI Lead Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save AI Lead Profile": {
+      "main": [
+        [
+          {
+            "node": "Send AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Human Requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Requested?": {
+      "main": [
+        [],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "280487cc-1112-4c86-abb7-458735818e26",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b0499b8838c5268c1738b696a9396eb3e50ac246181bfe51942e2557bdb7b27d"
+  },
+  "nodeGroups": [],
+  "id": "orWtL3puY1m8XzeU",
+  "tags": []
+}
